@@ -382,7 +382,8 @@ function cardEl(c,playable){const d=document.createElement('div');
 function renderHand(){const ha=document.getElementById('handArea');ha.innerHTML='';
   if(G&&G.online){const me=G.players.find(p=>p.sid===socket.id);if(!me)return;
     const myTurn=G.players[G.turn]&&G.players[G.turn].sid===socket.id&&G.phase==='play';
-    me.cards.forEach(c=>ha.appendChild(cardEl(c,myTurn)));return;}
+    const mustOpen=G.isFirstRoundEver&&G.firstTrickOfRound&&(G.table||[]).length===0;
+    me.cards.forEach(c=>{const playable=myTurn&&(!mustOpen||c.corner===G.openCardId);ha.appendChild(cardEl(c,playable));});return;}
   const cur=G.players[G.turn];if(!cur||cur.bot||G.phase!=='play'||G.revealedFor!==G.turn)return;
   const mustOpen=G.isFirstRoundEver&&G.firstTrickOfRound&&G.table.length===0;
   cur.cards.forEach(c=>{const playable=!mustOpen||c.corner===G.openCardId;ha.appendChild(cardEl(c,playable));});}
@@ -438,8 +439,11 @@ function advanceBid(){G.bidIndex++;
 function playCard(cardId){
   if(G&&G.online){
     if(!G.players[G.turn]||G.players[G.turn].sid!==socket.id)return;
-    const me=G.players.find(p=>p.sid===socket.id);
-    if(me){me.cards=me.cards.filter(c=>c.id!==cardId);}
+    const me=G.players.find(p=>p.sid===socket.id); if(!me)return;
+    const card=me.cards.find(c=>c.id===cardId); if(!card)return;
+    const mustOpen=G.isFirstRoundEver&&G.firstTrickOfRound&&(G.table||[]).length===0;
+    if(mustOpen&&card.corner!==G.openCardId){alert('প্রথম চালে সর্বনিম্ন কার্ড (ওপেন কার্ড) দিতে হবে');return;}
+    me.cards=me.cards.filter(c=>c.id!==cardId);
     sfx('play');renderHand();
     socket.emit('playCard',{code:myRoom,cardId});return;
   }
@@ -567,13 +571,24 @@ function connectAndDo(action,statusId){
       if(!socket){
         socket=io();
         socket.on('lobby',d=>renderLobby(d));
-        socket.on('errMsg',m=>{set(m,true,()=>connectAndDo(action,statusId))});
+        socket.on('errMsg',m=>{set(m,true,()=>connectAndDo(action,statusId));try{alert(m);}catch(e){}});
         socket.on('roomCreated',d=>{myRoom=d.code;isHost=true;go('screen-online-lobby');renderLobby(d)});
         socket.on('joined',d=>{myRoom=d.code;go('screen-online-lobby');renderLobby(d)});
         socket.on('dealt',d=>{go('screen-game');buildOnlineG(d.state,d.yourCards);sfx('deal');renderGame();maybeOnlineBid();});
         socket.on('state',d=>{buildOnlineG(d,null);renderGame();maybeOnlineBid();});
+        socket.on('yourCards',d=>{buildOnlineG(d.state,d.yourCards);renderGame();});
         socket.on('trickWon',d=>{onlineTrickWon(d);});
         socket.on('roundEnd',d=>{onlineRoundEnd(d);});
+        socket.on('roomClosed',d=>{
+          const reason=(d&&d.reason)||'রুম বন্ধ হয়েছে';
+          try{alert(reason);}catch(e){}
+          myRoom=null;isHost=false;G=null;
+          ['overlayBid','overlayTrick','overlayRound','overlayPass'].forEach(id=>{const el=document.getElementById(id);if(el)el.classList.remove('active');});
+          go('screen-home');
+        });
+        socket.on('disconnect',()=>{
+          if(myRoom){try{alert('সার্ভার সংযোগ বিচ্ছিন্ন');}catch(e){}myRoom=null;isHost=false;G=null;go('screen-home');}
+        });
       }
       clearTimeout(timeoutId);action();
     }).catch(e=>{clearTimeout(timeoutId);set('সংযোগ স্থাপন ব্যর্থ হয়েছে।',true,()=>connectAndDo(action,statusId));});
@@ -627,7 +642,8 @@ function buildOnlineG(state,myCards){
     round:state.round, isFirstRoundEver:!!state.isFirstRoundEver,
     table:(state.table||[]).map(t=>({pid:idMap[t.pid]??0,card:t.card})),
     turn:idMap[state.currentTurn]??0,
-    phase:state.phase, firstTrickOfRound:false,
+    phase:state.phase, firstTrickOfRound:!!state.firstTrickOfRound,
+    openCardId:state.openCardId,
     revealedFor:idMap[socket.id]??0, gameWinner:state.gameWinner||null
   };
 }
