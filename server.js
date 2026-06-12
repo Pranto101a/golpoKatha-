@@ -15,7 +15,7 @@ app.use(express.static(__dirname));
 
 const POINT_POOL = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15];
 function pickCornerNumbers(total) {
-  const pool = []; for (let i = 5; i <= 295; i++) pool.push(i);
+  const pool = []; for (let i = 1; i <= 150; i++) pool.push(i);
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));[pool[i], pool[j]] = [pool[j], pool[i]];
   }
