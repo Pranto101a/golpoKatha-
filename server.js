@@ -13,7 +13,7 @@ const io = new Server(server, { cors: { origin: '*' } });
 
 app.use(express.static(__dirname));
 
-const POINT_POOL = [2, 4, 6, 7, 10, 15, 20];
+const POINT_POOL = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15];
 function pickCornerNumbers(total) {
   const pool = []; for (let i = 5; i <= 295; i++) pool.push(i);
   for (let i = pool.length - 1; i > 0; i--) {
@@ -153,7 +153,7 @@ io.on('connection', socket => {
           const pts = pp.collected.reduce((s, c) => s + c.point, 0);
           pp.roundScore = pts;
           if (room.isFirstRoundEver) pp.score += pts;
-          else if (pts >= pp.bid) pp.score += pp.bid + pts;
+          else if (pts >= pp.bid) pp.score += pp.bid;
           else pp.score -= pp.bid;
         });
         room.isFirstRoundEver = false;

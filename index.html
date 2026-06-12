@@ -78,10 +78,10 @@ input,select{font-family:inherit}
   font-family:'Baloo Da 2',sans-serif;font-weight:800;user-select:none;transition:transform .2s;flex:0 0 auto;}
 .card-ui.odd{background:linear-gradient(160deg,#ffe0ec,#ffb6c9);border-color:#a8326a}
 .card-ui.even{background:linear-gradient(160deg,#dff3ff,#a8d8ff);border-color:#1e5a9b}
-.card-ui .corner{position:absolute;font-size:14px;font-weight:800}
+.card-ui .corner{position:absolute;font-size:11px;font-weight:700}
 .card-ui .corner.tl{top:4px;left:6px}
 .card-ui .corner.br{bottom:4px;right:6px;transform:rotate(180deg)}
-.card-ui .point{font-size:22px}
+.card-ui .point{font-size:16px}
 .card-ui.back{background:repeating-linear-gradient(45deg,#3a1b6b,#3a1b6b 6px,#6b2bb8 6px,#6b2bb8 12px);color:#ffd86b;border-color:#ffd86b;font-size:30px}
 .card-ui.playable{cursor:pointer;box-shadow:0 0 14px #ffd86b,0 6px 12px rgba(0,0,0,.5)}
 .card-ui.playable:active{transform:translateY(-6px) scale(1.05)}
@@ -110,7 +110,7 @@ input,select{font-family:inherit}
 .room-code-display{font-size:36px;font-weight:800;color:#ffd86b;letter-spacing:6px;
   padding:14px;background:rgba(0,0,0,.4);border-radius:14px;margin:10px 0;font-family:'Baloo Da 2'}
 
-@media (max-width:380px){.card-ui{width:64px;height:90px}.card-ui .point{font-size:18px}}
+@media (max-width:380px){.card-ui{width:64px;height:90px}.card-ui .point{font-size:14px}.card-ui .corner{font-size:10px}}
 </style>
 </head>
 <body>
@@ -254,7 +254,7 @@ input,select{font-family:inherit}
   <div class="overlay-card"><h2>বিড করুন</h2>
     <p id="bidName">কত পয়েন্ট তুলবেন?</p>
     <div class="bid-grid" id="bidGrid"></div>
-    <div style="font-size:11px;opacity:.7">পেলে: +বিড +সংগৃহীত পয়েন্ট। মিস হলে: −বিড পয়েন্ট।</div>
+    <div style="font-size:11px;opacity:.7">পেলে: +বিড পয়েন্ট। মিস হলে: −বিড পয়েন্ট।</div>
   </div>
 </div>
 <div class="overlay" id="overlayTrick">
@@ -319,7 +319,7 @@ renderPlayersList();
 
 // ============ Game ============
 let G=null;
-const POINT_POOL=[2,4,6,7,10,15,20];
+const POINT_POOL=[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15];
 function pickCornerNumbers(total){const pool=[];for(let i=5;i<=295;i++)pool.push(i);for(let i=pool.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[pool[i],pool[j]]=[pool[j],pool[i]]}return pool.slice(0,total);}
 function buildDeck(n,per){const total=n*per;const ids=Array.from({length:total},(_,i)=>i+1);
   for(let i=ids.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[ids[i],ids[j]]=[ids[j],ids[i]]}
@@ -404,12 +404,26 @@ function showBidOverlay(p){
   document.getElementById('overlayBid').classList.add('active');}
 
 function botBid(p){
-  // estimate expected points from high-corner cards
-  const total=G.players.length*G.cardsPer;
-  let est=0;
-  p.cards.forEach(c=>{const pct=c.corner/total;
-    if(pct>0.75)est+=10;else if(pct>0.55)est+=5;});
-  // round to multiple of 5, cap 50
+  // Smart bid: estimate tricks bot can win, then expected points per trick.
+  // Use relative corner rank of THIS bot's cards vs all corners in play.
+  const allCorners=[];
+  G.players.forEach(pl=>pl.cards.forEach(c=>allCorners.push(c.corner)));
+  allCorners.sort((a,b)=>a-b);
+  const n=allCorners.length;
+  // A card "likely wins" if its corner is in the top (players-count) slots overall.
+  // Stronger heuristic: count cards in top 25% as near-sure winners, top 25-50% as maybes.
+  let sureWins=0, maybeWins=0;
+  p.cards.forEach(c=>{
+    const rankFromTop = n - allCorners.indexOf(c.corner); // 1 = highest
+    if(rankFromTop<=G.players.length) sureWins++;
+    else if(rankFromTop<=G.players.length*2) maybeWins++;
+  });
+  // Expected points per trick won (avg of POINT_POOL halved since half the cards are odd/0)
+  const avgPerTrick = 4; // conservative
+  let est = sureWins*avgPerTrick + Math.floor(maybeWins*avgPerTrick*0.4);
+  // Be cautious: bid slightly under estimate to avoid -bid penalty
+  est = Math.max(0, est-2);
+  // Snap to multiples of 5, cap 50
   p.bid=Math.min(50,Math.max(0,Math.round(est/5)*5));}
 
 function advanceBid(){G.bidIndex++;
@@ -425,13 +439,45 @@ function playCard(cardId){const cur=G.players[G.turn];
   if(G.table.length===G.players.length){setTimeout(resolveTrick,500)}
   else{G.turn=(G.turn+1)%G.players.length;setTimeout(driveTurn,400)}}
 
-function botPlay(p){const need=p.bid!=null && p.livePts<p.bid;
-  let highest=p.cards[p.cards.length-1];let lowest=p.cards[0];
-  const top=G.table.length?Math.max(...G.table.map(t=>t.card.corner)):0;
+function botPlay(p){
+  // Smart play: think about whether bot still needs points (bid - livePts).
+  // Sorted asc by corner already; pick the best card given table state.
+  const sorted=[...p.cards].sort((a,b)=>a.corner-b.corner);
+  const lowest=sorted[0], highest=sorted[sorted.length-1];
+  const need = p.bid==null ? 0 : Math.max(0, p.bid - p.livePts);
+  const cardsLeft = p.cards.length;
+  const tableTop = G.table.length? Math.max(...G.table.map(t=>t.card.corner)) : -1;
+  const tablePts = G.table.reduce((s,t)=>s+t.card.point,0);
+  const leading = G.table.length===0;
   let chosen;
-  if(need&&highest.corner>top)chosen=highest;
-  else if(need){const beats=p.cards.find(c=>c.corner>top);chosen=beats||lowest;}
-  else chosen=lowest;
+
+  if(leading){
+    // Leading: if no bid pressure, lead lowest to save high cards.
+    // If still need points and have multiple turns, lead a mid card to probe; else lead highest.
+    if(need<=0) chosen=lowest;
+    else if(cardsLeft<=2 && need>0) chosen=highest;
+    else chosen = sorted[Math.floor(sorted.length/2)] || lowest;
+  } else {
+    // Following: can we win the current trick?
+    const winners = sorted.filter(c=>c.corner>tableTop);
+    const cheapestWin = winners[0];
+    if(need>0 && tablePts>0 && cheapestWin){
+      // Want points and trick has value -> win it with cheapest winner.
+      chosen = cheapestWin;
+    } else if(need<=0 && cheapestWin && tablePts===0){
+      // No need + trick worthless -> dump highest (avoid winning empty tricks later? actually winning is fine)
+      // safer: dump lowest to save high cards.
+      chosen = lowest;
+    } else if(need<=0){
+      // Already met bid: avoid winning more (don't waste high cards).
+      // Play lowest non-winner if possible.
+      const losers = sorted.filter(c=>c.corner<=tableTop);
+      chosen = losers[losers.length-1] || lowest;
+    } else {
+      // Need points but cannot win -> dump lowest.
+      chosen = lowest;
+    }
+  }
   playCard(chosen.id);}
 
 function resolveTrick(){let winIdx=0;
@@ -459,7 +505,7 @@ function endRound(){
   // Round 1: collect = score. Round 2+: bid points
   G.players.forEach(p=>{const pts=p.collected.reduce((s,c)=>s+c.point,0);
     if(G.isFirstRoundEver){p.score+=pts}
-    else if(pts>=p.bid){p.score+=p.bid+pts}
+    else if(pts>=p.bid){p.score+=p.bid}
     else{p.score-=p.bid}});
   G.isFirstRoundEver=false;
   let won=null;
@@ -471,7 +517,7 @@ function endRound(){
   document.getElementById('roundTitle').textContent=won?`🎉 ${won} জিতেছে!`:`রাউন্ড ${bn(G.round)} শেষ`;
   const rr=document.getElementById('roundResult');rr.innerHTML='';
   G.players.forEach(p=>{const pts=p.collected.reduce((s,c)=>s+c.point,0);
-    const note=G.isFirstRoundEver?'':(pts>=p.bid?`✅ বিড ${p.bid} হিট (+${p.bid+pts})`:`❌ বিড ${p.bid} মিস (−${p.bid})`);
+    const note=G.isFirstRoundEver?'':(pts>=p.bid?`✅ বিড ${p.bid} হিট (+${p.bid})`:`❌ বিড ${p.bid} মিস (−${p.bid})`);
     const d=document.createElement('div');d.style.marginBottom='4px';
     d.textContent=`${p.name}: তোলা ${pts} | ট্রিক ${p.tricksWon} | মোট ${p.score} ${note}`;rr.appendChild(d);});
   document.getElementById('roundBtn').textContent=won?'নতুন গেম':'পরের রাউন্ড';
