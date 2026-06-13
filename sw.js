@@ -1,77 +1,47 @@
-/* Simple offline cache for this static SPA (GitHub Pages friendly). */
-const CACHE_NAME = "Index.html";
+/* গল্পকথা — offline cache (ডাটা ছাড়া খেলতে) */
+const CACHE = "golpokotha-v1";
+const PRECACHE = ["./", "./index.html", "./bg.jpeg", "./manifest.webmanifest"];
 
-// We intentionally keep this list small; the runtime cache below will pick up
-// the rest of the assets as you play.
-const PRECACHE_URLS = [
-  "./",
-  "./index.html",
-  "./404.html",
-  "./manifest.webmanifest",
-  "./favicon.svg",
-  "./robots.txt",
-  "./opengraph.jpg"
-];
-
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches
-      .open(CACHE_NAME)
-      .then((cache) => cache.addAll(PRECACHE_URLS))
-      .then(() => self.skipWaiting())
-  );
+self.addEventListener("install", e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(PRECACHE).catch(()=>{})).then(()=>self.skipWaiting()));
 });
-
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    (async () => {
-      const keys = await caches.keys();
-      await Promise.all(keys.map((k) => (k === CACHE_NAME ? null : caches.delete(k))));
-      await self.clients.claim();
-    })()
-  );
+self.addEventListener("activate", e => {
+  e.waitUntil((async()=>{
+    const ks = await caches.keys();
+    await Promise.all(ks.map(k => k===CACHE?null:caches.delete(k)));
+    await self.clients.claim();
+  })());
 });
-
-function isNavigationRequest(request) {
-  return request.mode === "navigate" || (request.method === "GET" && request.headers.get("accept")?.includes("text/html"));
-}
-
-self.addEventListener("fetch", (event) => {
-  const { request } = event;
-  if (request.method !== "GET") return;
-
-  // SPA navigation fallback (important for offline + deep links)
-  if (isNavigationRequest(request)) {
-    event.respondWith(
-      (async () => {
-        try {
-          const network = await fetch(request);
-          const cache = await caches.open(CACHE_NAME);
-          cache.put("./index.html", network.clone());
-          return network;
-        } catch {
-          const cached = await caches.match("./index.html", { ignoreSearch: true });
-          return cached || new Response("Offline", { status: 503, headers: { "Content-Type": "text/plain" } });
-        }
-      })()
-    );
+self.addEventListener("fetch", e => {
+  const req = e.request;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
+  // Never intercept socket.io / websocket traffic — online mode needs live network
+  if (url.pathname.startsWith("/socket.io")) return;
+  if (req.mode === "navigate") {
+    e.respondWith((async()=>{
+      try {
+        const net = await fetch(req);
+        const c = await caches.open(CACHE); c.put("./index.html", net.clone());
+        return net;
+      } catch {
+        const cached = await caches.match("./index.html", {ignoreSearch:true});
+        return cached || new Response("Offline", {status:503});
+      }
+    })());
     return;
   }
-
-  // For JS/CSS/images: cache-first, then network (and store for next time)
-  event.respondWith(
-    (async () => {
-      // Do NOT ignore query params for static assets; our site uses ?v=... cache-busting.
-      const cached = await caches.match(request);
-      if (cached) return cached;
-      try {
-        const network = await fetch(request);
-        const cache = await caches.open(CACHE_NAME);
-        cache.put(request, network.clone());
-        return network;
-      } catch {
-        return new Response("", { status: 504 });
+  e.respondWith((async()=>{
+    const cached = await caches.match(req);
+    if (cached) return cached;
+    try {
+      const net = await fetch(req);
+      if (net && net.status === 200 && (url.origin === location.origin)) {
+        const c = await caches.open(CACHE); c.put(req, net.clone());
       }
-    })()
-  );
+      return net;
+    } catch {
+      return cached || new Response("", {status: 504});
+    }
+  })());
 });

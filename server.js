@@ -47,7 +47,6 @@ function publicRoom(r) {
     code: r.code, phase: r.phase, round: r.round, currentTurn: r.players[r.currentTurn]?.id,
     targetScore: r.targetScore, teamMode: r.teamMode, cardsPer: r.cardsPer,
     table: r.table, gameWinner: r.gameWinner, isFirstRoundEver: r.isFirstRoundEver,
-    openCardId: r.openCardId, firstTrickOfRound: r.firstTrickOfRound,
     players: r.players.map(p => ({
       id: p.id, name: p.name, host: p.host, score: p.score, team: p.team,
       bid: p.bid, tricksWon: p.tricksWon, livePts: p.livePts || 0,
@@ -58,10 +57,6 @@ function publicRoom(r) {
 function sendLobby(r){ io.to(r.code).emit('lobby', publicRoom(r)); }
 function sendState(r){ io.to(r.code).emit('state', publicRoom(r)); }
 function sendDealt(r){ r.players.forEach(p => io.to(p.id).emit('dealt', { yourCards: p.cards, state: publicRoom(r) })); }
-function sendMyCards(r, playerId){
-  const p = r.players.find(x => x.id === playerId);
-  if (p) io.to(playerId).emit('yourCards', { yourCards: p.cards, state: publicRoom(r) });
-}
 
 function dealRoom(r) {
   const deck = buildDeck(r.players.length, r.cardsPer);
@@ -76,16 +71,6 @@ function dealRoom(r) {
   if (op < 0) op = 0; r.currentTurn = op; r.firstTrickOfRound = true;
   r.openCardId = minCorner;
   r.phase = r.isFirstRoundEver ? 'play' : 'bid'; r.bidIndex = 0;
-  r.gameWinner = null;
-}
-
-function closeRoom(code, reason){
-  const r = rooms[code]; if (!r) return;
-  io.to(code).emit('roomClosed', { reason: reason || 'রুম বন্ধ হয়েছে' });
-  // force-leave all sockets in the room
-  const ids = r.players.map(p => p.id);
-  ids.forEach(id => { const s = io.sockets.sockets.get(id); if (s) s.leave(code); });
-  delete rooms[code];
 }
 
 io.on('connection', socket => {
@@ -114,18 +99,6 @@ io.on('connection', socket => {
     socket.join(code);
     socket.emit('joined', publicRoom(room));
     sendLobby(room);
-  });
-
-  socket.on('leaveRoom', ({ code }) => {
-    const room = rooms[code]; if (!room) return;
-    const me = room.players.find(p => p.id === socket.id); if (!me) return;
-    socket.leave(code);
-    if (me.host || room.phase !== 'lobby') {
-      closeRoom(code, me.host ? 'হোস্ট রুম ছেড়ে দিয়েছে' : `${me.name} রুম ছেড়ে দিয়েছে`);
-    } else {
-      room.players = room.players.filter(p => p.id !== socket.id);
-      sendLobby(room);
-    }
   });
 
   socket.on('startGame', ({ code }) => {
@@ -158,16 +131,10 @@ io.on('connection', socket => {
 
   socket.on('playCard', ({ code, cardId }) => {
     const room = rooms[code]; if (!room || room.phase !== 'play') return;
-    if (room.players[room.currentTurn].id !== socket.id) {
-      socket.emit('errMsg', 'আপনার পালা নয়'); sendMyCards(room, socket.id); return;
-    }
+    if (room.players[room.currentTurn].id !== socket.id) return;
     const p = room.players[room.currentTurn];
-    const idx = p.cards.findIndex(c => c.id === cardId);
-    if (idx < 0) { sendMyCards(room, socket.id); return; }
-    if (room.firstTrickOfRound && room.isFirstRoundEver && room.table.length === 0 && p.cards[idx].corner !== room.openCardId) {
-      socket.emit('errMsg', 'প্রথম চালে সর্বনিম্ন কার্ড (ওপেন কার্ড) দিতে হবে');
-      sendMyCards(room, socket.id); return;
-    }
+    const idx = p.cards.findIndex(c => c.id === cardId); if (idx < 0) return;
+    if (room.firstTrickOfRound && room.isFirstRoundEver && room.table.length === 0 && p.cards[idx].corner !== room.openCardId) return;
     const card = p.cards.splice(idx, 1)[0];
     room.table.push({ playerId: socket.id, pid: p.id, card });
 
@@ -213,23 +180,16 @@ io.on('connection', socket => {
     const room = rooms[code]; if (!room) return;
     const me = room.players.find(p => p.id === socket.id);
     if (!me || !me.host) return;
-    if (room.phase === 'gameOver') return;
     room.round++; dealRoom(room); sendDealt(room);
   });
 
   socket.on('disconnect', () => {
     Object.keys(rooms).forEach(code => {
       const r = rooms[code];
-      const me = r.players.find(p => p.id === socket.id);
-      if (!me) return;
-      // If host leaves OR game is in progress: close the room for everyone
-      if (me.host || r.phase !== 'lobby') {
-        closeRoom(code, me.host ? 'হোস্ট চলে গিয়েছে — রুম বন্ধ' : `${me.name} চলে গিয়েছে — রুম বন্ধ`);
-        return;
-      }
-      // Lobby + non-host: just remove that player
+      const wasHost = r.players.find(p => p.id === socket.id)?.host;
       r.players = r.players.filter(p => p.id !== socket.id);
       if (!r.players.length) { delete rooms[code]; return; }
+      if (wasHost) r.players[0].host = true;
       sendLobby(r);
     });
   });

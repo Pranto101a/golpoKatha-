@@ -1,17 +1,12 @@
 {
-  "name": "গোয়েন্দাগির — বাংলা কার্ড গেম",
-  "short_name": "গোয়েন্দাগিরি",
+  "name": "গল্পকথা — সংখ্যা যুদ্ধ",
+  "short_name": "গল্পকথা",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#0B1220",
-  "theme_color": "#D9A441",
+  "background_color": "#0a0820",
+  "theme_color": "#8b5cf6",
   "icons": [
-    {
-      "src": "./opengraph.jpg",
-      "sizes": "512x512",
-      "type": "image/jpeg"
-    }
+    { "src": "./bg.jpeg", "sizes": "512x512", "type": "image/jpeg" }
   ]
 }
-

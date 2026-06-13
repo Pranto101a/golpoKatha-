@@ -4,7 +4,15 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
 <title>গল্পকথা — সংখ্যা যুদ্ধ</title>
-<link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;600;700&family=Baloo+Da+2:wght@600;800&display=swap" rel="stylesheet">
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#8b5cf6">
+<script>
+  // ডাটা ছাড়াই খেলতে পারবে (offline-first PWA)
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+  }
+</script>
+<link href="https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;600;700&family=Baloo+Da+2:wght@600;800&display=swap" rel="stylesheet" onerror="this.remove()">
 <style>
 :root{ --gold:#ffcf6b; --gold2:#ff9a3c; --pink:#ff5d8f; --purple:#8b5cf6; --teal:#22d3ee; --bg:#0a0820; }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -84,6 +92,11 @@ input,select{font-family:inherit}
 .card-ui .point{font-size:16px}
 .card-ui.back{background:repeating-linear-gradient(45deg,#3a1b6b,#3a1b6b 6px,#6b2bb8 6px,#6b2bb8 12px);color:#ffd86b;border-color:#ffd86b;font-size:30px}
 .card-ui.playable{cursor:pointer;box-shadow:0 0 14px #ffd86b,0 6px 12px rgba(0,0,0,.5)}
+.card-ui.must{box-shadow:0 0 0 3px #4ade80,0 0 22px #4ade80,0 6px 12px rgba(0,0,0,.5);animation:mustPulse 1s ease-in-out infinite;position:relative}
+.card-ui.must::after{content:"▼ এটি";position:absolute;top:-22px;left:50%;transform:translateX(-50%);background:#4ade80;color:#063;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:800;white-space:nowrap}
+@keyframes mustPulse{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+.card-ui.dim{opacity:.35;filter:grayscale(.5)}
+#mustHint{display:none;text-align:center;background:rgba(74,222,128,.15);border:1px solid #4ade80;color:#bbf7d0;padding:8px 12px;margin:6px auto;border-radius:10px;font-size:13px;max-width:480px;font-weight:600}
 .card-ui.playable:active{transform:translateY(-6px) scale(1.05)}
 .hand{display:flex;gap:6px;overflow-x:auto;padding:14px 6px;width:100%;justify-content:center;flex-wrap:wrap;}
 
@@ -128,9 +141,9 @@ input,select{font-family:inherit}
       <button onclick="go('screen-setup')">শুরু করুন</button>
     </div>
     <div class="mode-card">
-      <h2>🌐 অনলাইন মাল্টিপ্লেয়ার</h2>
-      <p>রুম বানান বা রুম কোড দিয়ে যোগ দিন</p>
-      <button onclick="go('screen-online-pick')">এগিয়ে যান</button>
+      <h2>🌐 অনলাইন মাল্টিপ্লেয়ার <span id="netDot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ff5d5d;vertical-align:middle;margin-left:4px" title="অফলাইন"></span></h2>
+      <p>রুম বানান বা রুম কোড দিয়ে যোগ দিন <span id="netNote" style="display:block;font-size:11px;opacity:.75;margin-top:4px;color:#ffd86b">📶 ইন্টারনেট সংযোগ প্রয়োজন</span></p>
+      <button onclick="tryOnline()">এগিয়ে যান</button>
     </div>
   </div>
   <div style="margin-top:auto;padding:14px;font-size:11px;opacity:.6;text-align:center">
@@ -243,6 +256,7 @@ input,select{font-family:inherit}
   <div class="scores" id="scoresBar"></div>
   <div class="table-area" id="tableArea"></div>
   <div id="currentTurnLabel" style="font-size:14px;opacity:.85;margin:4px"></div>
+  <div id="mustHint">🟢 সর্বনিম্ন কার্ড দিয়ে খেলা শুরু — সবুজ চিহ্নিত কার্ডটি খেলুন</div>
   <div class="hand" id="handArea"></div>
 </div>
 
@@ -372,21 +386,35 @@ function renderGame(){
   renderHand();
 }
 
-function cardEl(c,playable){const d=document.createElement('div');
-  d.className='card-ui '+(c.isEven?'even':'odd')+(playable?' playable':'');
+function cardEl(c,playable,must,dim){const d=document.createElement('div');
+  d.className='card-ui '+(c.isEven?'even':'odd')+(playable?' playable':'')+(must?' must':'')+(dim?' dim':'');
   d.innerHTML=`<div class="corner tl">${bn(c.corner)}</div>
     <div class="point">${c.isEven?bn(c.point):''}</div>
     <div class="corner br">${bn(c.corner)}</div>`;
-  if(playable)d.onclick=()=>playCard(c.id);return d;}
+  if(playable)d.onclick=()=>{ if(d.dataset.tapped)return; d.dataset.tapped='1'; playCard(c.id); };
+  return d;}
 
 function renderHand(){const ha=document.getElementById('handArea');ha.innerHTML='';
+  const hint=document.getElementById('mustHint'); if(hint)hint.style.display='none';
   if(G&&G.online){const me=G.players.find(p=>p.sid===socket.id);if(!me)return;
     const myTurn=G.players[G.turn]&&G.players[G.turn].sid===socket.id&&G.phase==='play';
-    const mustOpen=G.isFirstRoundEver&&G.firstTrickOfRound&&(G.table||[]).length===0;
-    me.cards.forEach(c=>{const playable=myTurn&&(!mustOpen||c.corner===G.openCardId);ha.appendChild(cardEl(c,playable));});return;}
+    const mustOpenO=myTurn && G.isFirstRoundEver && G.firstTrickOfRound && (G.table?G.table.length===0:true) && G.openCardId!=null;
+    if(mustOpenO && hint) hint.style.display='block';
+    me.cards.forEach(c=>{
+      const isMust = mustOpenO && c.corner===G.openCardId;
+      const playable = myTurn && (!mustOpenO || isMust);
+      const dim = mustOpenO && !isMust;
+      ha.appendChild(cardEl(c,playable,isMust,dim));
+    });return;}
   const cur=G.players[G.turn];if(!cur||cur.bot||G.phase!=='play'||G.revealedFor!==G.turn)return;
   const mustOpen=G.isFirstRoundEver&&G.firstTrickOfRound&&G.table.length===0;
-  cur.cards.forEach(c=>{const playable=!mustOpen||c.corner===G.openCardId;ha.appendChild(cardEl(c,playable));});}
+  if(mustOpen && hint) hint.style.display='block';
+  cur.cards.forEach(c=>{
+    const isMust = mustOpen && c.corner===G.openCardId;
+    const playable = !mustOpen || isMust;
+    const dim = mustOpen && !isMust;
+    ha.appendChild(cardEl(c,playable,isMust,dim));
+  });}
 
 function driveTurn(){const cur=G.players[G.turn];
   if(G.phase==='bid'){if(cur.bot){setTimeout(()=>{botBid(cur);advanceBid()},500)}else{showBidOverlay(cur)}return;}
@@ -436,23 +464,34 @@ function advanceBid(){G.bidIndex++;
     renderGame();setTimeout(driveTurn,400);}
   else{G.turn=(G.turn+1)%G.players.length;renderGame();setTimeout(driveTurn,400);}}
 
+let _playLock=false;
 function playCard(cardId){
-  if(G&&G.online){
-    if(!G.players[G.turn]||G.players[G.turn].sid!==socket.id)return;
-    const me=G.players.find(p=>p.sid===socket.id); if(!me)return;
-    const card=me.cards.find(c=>c.id===cardId); if(!card)return;
-    const mustOpen=G.isFirstRoundEver&&G.firstTrickOfRound&&(G.table||[]).length===0;
-    if(mustOpen&&card.corner!==G.openCardId){alert('প্রথম চালে সর্বনিম্ন কার্ড (ওপেন কার্ড) দিতে হবে');return;}
-    me.cards=me.cards.filter(c=>c.id!==cardId);
-    sfx('play');renderHand();
-    socket.emit('playCard',{code:myRoom,cardId});return;
-  }
-  const cur=G.players[G.turn];
-  const idx=cur.cards.findIndex(c=>c.id===cardId);if(idx<0)return;
-  if(G.isFirstRoundEver&&G.firstTrickOfRound&&G.table.length===0&&cur.cards[idx].corner!==G.openCardId)return;
-  const card=cur.cards.splice(idx,1)[0];G.table.push({pid:cur.id,card});sfx('play');renderGame();
-  if(G.table.length===G.players.length){setTimeout(resolveTrick,500)}
-  else{G.turn=(G.turn+1)%G.players.length;setTimeout(driveTurn,400)}}
+  if(_playLock)return; _playLock=true;
+  try{
+    if(G&&G.online){
+      if(!G.players[G.turn]||G.players[G.turn].sid!==socket.id){_playLock=false;return;}
+      const me=G.players.find(p=>p.sid===socket.id);
+      if(!me||!me.cards.some(c=>c.id===cardId)){_playLock=false;return;}
+      // First-trick must-open guard (client-side)
+      if(G.isFirstRoundEver&&G.firstTrickOfRound&&(G.table?G.table.length===0:true)&&G.openCardId!=null){
+        const card=me.cards.find(c=>c.id===cardId);
+        if(card && card.corner!==G.openCardId){_playLock=false;return;}
+      }
+      me.cards=me.cards.filter(c=>c.id!==cardId);
+      sfx('play');renderHand();
+      socket.emit('playCard',{code:myRoom,cardId});
+      // Server response will trigger next state; release lock on next state
+      setTimeout(()=>{_playLock=false;},600);
+      return;
+    }
+    const cur=G.players[G.turn];
+    const idx=cur.cards.findIndex(c=>c.id===cardId);if(idx<0){_playLock=false;return;}
+    if(G.isFirstRoundEver&&G.firstTrickOfRound&&G.table.length===0&&cur.cards[idx].corner!==G.openCardId){_playLock=false;return;}
+    const card=cur.cards.splice(idx,1)[0];G.table.push({pid:cur.id,card});sfx('play');renderGame();
+    if(G.table.length===G.players.length){setTimeout(()=>{resolveTrick();_playLock=false;},500);}
+    else{G.turn=(G.turn+1)%G.players.length;setTimeout(()=>{driveTurn();_playLock=false;},400);}
+  }catch(e){_playLock=false;throw e;}
+}
 
 function botPlay(p){
   // Smart play: think about whether bot still needs points (bid - livePts).
@@ -571,24 +610,13 @@ function connectAndDo(action,statusId){
       if(!socket){
         socket=io();
         socket.on('lobby',d=>renderLobby(d));
-        socket.on('errMsg',m=>{set(m,true,()=>connectAndDo(action,statusId));try{alert(m);}catch(e){}});
+        socket.on('errMsg',m=>{set(m,true,()=>connectAndDo(action,statusId))});
         socket.on('roomCreated',d=>{myRoom=d.code;isHost=true;go('screen-online-lobby');renderLobby(d)});
         socket.on('joined',d=>{myRoom=d.code;go('screen-online-lobby');renderLobby(d)});
         socket.on('dealt',d=>{go('screen-game');buildOnlineG(d.state,d.yourCards);sfx('deal');renderGame();maybeOnlineBid();});
         socket.on('state',d=>{buildOnlineG(d,null);renderGame();maybeOnlineBid();});
-        socket.on('yourCards',d=>{buildOnlineG(d.state,d.yourCards);renderGame();});
         socket.on('trickWon',d=>{onlineTrickWon(d);});
         socket.on('roundEnd',d=>{onlineRoundEnd(d);});
-        socket.on('roomClosed',d=>{
-          const reason=(d&&d.reason)||'রুম বন্ধ হয়েছে';
-          try{alert(reason);}catch(e){}
-          myRoom=null;isHost=false;G=null;
-          ['overlayBid','overlayTrick','overlayRound','overlayPass'].forEach(id=>{const el=document.getElementById(id);if(el)el.classList.remove('active');});
-          go('screen-home');
-        });
-        socket.on('disconnect',()=>{
-          if(myRoom){try{alert('সার্ভার সংযোগ বিচ্ছিন্ন');}catch(e){}myRoom=null;isHost=false;G=null;go('screen-home');}
-        });
       }
       clearTimeout(timeoutId);action();
     }).catch(e=>{clearTimeout(timeoutId);set('সংযোগ স্থাপন ব্যর্থ হয়েছে।',true,()=>connectAndDo(action,statusId));});
@@ -642,8 +670,7 @@ function buildOnlineG(state,myCards){
     round:state.round, isFirstRoundEver:!!state.isFirstRoundEver,
     table:(state.table||[]).map(t=>({pid:idMap[t.pid]??0,card:t.card})),
     turn:idMap[state.currentTurn]??0,
-    phase:state.phase, firstTrickOfRound:!!state.firstTrickOfRound,
-    openCardId:state.openCardId,
+    phase:state.phase, firstTrickOfRound:false,
     revealedFor:idMap[socket.id]??0, gameWinner:state.gameWinner||null
   };
 }
@@ -695,6 +722,27 @@ function onlineRoundEnd(d){
   else if(isHost){btn.style.display='block';btn.textContent='পরের রাউন্ড';btn.onclick=()=>{document.getElementById('overlayRound').classList.remove('active');socket.emit('nextRound',{code:myRoom});};}
   else{btn.style.display='none';}
   document.getElementById('overlayRound').classList.add('active');
+}
+</script>
+
+<script>
+// === Online/Offline status indicator for online multiplayer ===
+function updateNetUI(){
+  var on = navigator.onLine;
+  var dot = document.getElementById('netDot');
+  var note = document.getElementById('netNote');
+  if (dot) { dot.style.background = on ? '#4ade80' : '#ff5d5d'; dot.title = on ? 'অনলাইন' : 'অফলাইন'; }
+  if (note) { note.textContent = on ? '✅ ইন্টারনেট সংযুক্ত — অনলাইন খেলা সম্ভব' : '📵 ইন্টারনেট নেই — শুধু বট/পাস-এন্ড-প্লে খেলা যাবে'; note.style.color = on ? '#4ade80' : '#ffd86b'; }
+}
+window.addEventListener('online', updateNetUI);
+window.addEventListener('offline', updateNetUI);
+document.addEventListener('DOMContentLoaded', updateNetUI);
+function tryOnline(){
+  if (!navigator.onLine) {
+    alert('📵 ইন্টারনেট সংযোগ নেই।\n\nঅনলাইন মাল্টিপ্লেয়ার খেলতে ডাটা/Wi-Fi চালু করুন।\nএখন আপনি বট ও পাস-এন্ড-প্লে মোডে খেলতে পারেন।');
+    return;
+  }
+  go('screen-online-pick');
 }
 </script>
 </body>
